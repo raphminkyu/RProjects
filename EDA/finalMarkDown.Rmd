@@ -1,0 +1,481 @@
+---
+title: "Analyzing the Cause of Air Pollution in Korea"
+author: "Raph Lee"
+Last Edit: "6/18"
+Translated: "9/4"
+geometry: margin=1.5in
+output:
+  rmdformats::readthedown:
+    code_folding: hide
+    highlight: kate
+numbersections: yes
+header-includes:
+- \usepackage{setspace}
+- \usepackage{ragged2e}
+
+papersize: letter
+fontsize: 12pt
+---
+```{r setup, include=FALSE}
+library(knitr)
+library(tidyverse)
+library(readxl)
+library(dplyr)
+library(lubridate)
+library(gridExtra)
+library(plotly)
+library(scales)
+library(kableExtra)
+library(DT)
+
+options(max.print="75")
+opts_chunk$set(echo=TRUE,
+	             cache=TRUE,
+               prompt=FALSE,
+               tidy=TRUE,
+               comment=NA,
+               message=FALSE,
+               warning=FALSE)
+opts_knit$set(width=75)
+theme_set(ggthemes::theme_tufte(base_size = 16))
+```
+
+# Objective
+
+Air pollution, especially particulate matter, is increasing in severity each year. 
+<br>
+This project aims to : <br>
+&nbsp;&nbsp;&nbsp;&nbsp;1. Analyze different factors that affect air pollution, especially particulate matter, in Korea
+<br>
+&nbsp;&nbsp;&nbsp;&nbsp;2. Analyze the claims that transportation affects particulate matter in Korea.
+<br>
+&nbsp;&nbsp;&nbsp;&nbsp;3. Apply EDA (Exploratory Data Analysis) functions to represent our analysis graphically. 
+
+
+# Problem
+
+What are the factors that affect particulate matter in Korea?
+
+
+# Observation
+According to WHO, transportation is increasing particulate matter globably(PM). WHO claims that road transports can contribute to 50% of PM emission in OECD countries. Note that Korea is a member of OECD. 
+
+> Source: https://www.who.int/sustainable-development/transport/health-risks/air-pollution/en/
+
+According to the Korean Particulate Matter Information Center, transportation is a main source of PM emission in Korea as well. Rather than simply blaming China for their lack of effort in mitigating pollution, Seoul should reduce particulate matter through efficient TDM (Transportation Demand Management). 
+
+
+> Source: https://bluesky.seoul.go.kr/news-list/major-news/page/22?article=358
+
+Starting February 15, the new "Particulate Matter Mitigation Act" introduces restrictions on transportation to mitigate PM emission in Seoul. The usage of "Level 5 Emission" Vehicles will be fined. In certain days in certain locations, only certain vehicles will be allowed to pass.
+
+> Source:https://bluesky.seoul.go.kr/finedust/emergency_reduction_measures
+
+
+# Hypothesis
+
+Transportation is a main source of PM emission in Korea. If the new transportation law is implemented, it will lower the overall level of particulate matter in Seoul. 
+
+
+# Data Wrangling
+
+
+## About the Dataset
+> Data Source: http://airemiss.nier.go.kr/common/downLoad.do?siteId=airemiss&fileSeq=411
+
+This dataset provides the average air pollution emitted by different sectors in 2015.This dataset provides insight regarding emission by location, industry, and the type of fuel used. This dataset was used because dataset after 2015 were not availble. 
+<br>
+&nbsp;&nbsp;&nbsp;&nbsp; - The dataset is provided by the Korean Ministry of Enviornment. 
+<br>
+&nbsp;&nbsp;&nbsp;&nbsp; - This dataset was be used to analyze the effect of transporation in Korea. 
+
+
+### Dataset
+
+Raw dataset as downloaded from its source.
+```{r dataset1}
+airPollution <- readxl::read_xlsx(path = "data.xlsx",
+                            col_names = TRUE,
+                            skip =3
+                           )
+
+airPollution %>% head() %>% kable %>% kable_styling(bootstrap_options = "striped", full_width = F)
+
+```
+
+#### Translating
+
+All nonnumeric columns were changed to factors. <br>
+The summary function reveals that around 1/3 of the data regarding pollution are missing. Column PM2.5 has 17005 missing values out of 44763; 38% of the data is missing. Due to the high variance as seen from the summary below, replacing the missing values will produce inaccurate results. Thus, rows with missing values for PM2.5 is removed.
+```{r datawrangling1}
+colnames(airPollution)[1:6] <- c("Area", "Municipality", "Sector", "Industry", "Type of Industry", "Fuel Type")
+
+airPollution <- airPollution[c(1:6, 11:12)]
+
+
+airPollution[sapply(airPollution, is.character)] <- lapply(airPollution[sapply(airPollution, is.character)],
+                                                           as.factor
+                                                           )
+
+
+airPollution %>% summary()
+```
+
+Summary of PM10
+```{r}
+airPollution$PM10%>% summary
+```
+
+Summary of PM10
+```{r}
+airPollution$PM2.5 %>% summary() 
+```
+
+
+ 
+
+## Total Emission
+
+According the to graph, 경상북도, 전라남도, and 경기도, and 충청남도 are the top polluters for particulate matter. In fact, Seoul (서울특별시) emits 8.2 times less PM2.5 than 경상북도. This is most likely due to the heavy industries in those regions. Perhaps Korea should mitigate the overall PM level through more regulations in those provinces.
+
+```{r plotly}
+areaPM10 <- airPollution %>% 
+  group_by(Area) %>%
+  summarise(TotalEmission = sum(PM10, na.rm = TRUE)) %>% 
+  arrange(desc(TotalEmission))
+barArea10 <- areaPM10 %>% 
+  ggplot2::ggplot(mapping = aes(x = reorder(Area, -TotalEmission), y = TotalEmission))+
+  geom_bar(stat = "identity")+
+  theme(text= element_text(family = "AppleGothic"), 
+        axis.text.x = element_text(angle = 90, hjust = 1))+
+  ggtitle("Total Emission of PM10 by Area")+
+  xlab("Area")
+
+areaPM2.5 <- airPollution %>% 
+  group_by(Area) %>%
+  summarise(TotalEmission = sum(PM2.5, na.rm = TRUE)) %>% 
+  arrange(desc(TotalEmission))
+barArea2.5 <- areaPM2.5 %>% 
+  ggplot2::ggplot(mapping = aes(x = reorder(Area, -TotalEmission), y = TotalEmission))+
+  geom_bar(stat = "identity")+
+  theme(text= element_text(family = "AppleGothic"),  axis.text.x = element_text(angle = 90, hjust = 1))+
+  ggtitle("Total Emission of PM2.5 by Area")+
+  xlab("Area")
+
+table10 <- areaPM10 %>% head(10) 
+table2.5 <- areaPM2.5 %>% head(10) 
+
+kable(list(table10, table2.5), caption = "Top 10 PM Polluters (PM10:left, PM2.5:right)") %>% 
+  kable_styling(position = "center")
+
+
+grid.arrange(barArea10, barArea2.5, nrow = 1)
+
+
+```
+ 
+Since the act affected mostly Seoul, the dataset was trimmed to include only Seoul (서울특별시).
+```{r seoul} 
+airPollution <- airPollution %>% 
+  filter(Area == "서울특별시")
+airPollution %>% summary()
+
+```
+
+## Transportation 
+
+To discover the significance of transportation in PM emission in Seoul, the industry column were divided into "transportation" and non-"transportation." 
+
+```{r transpo}
+# Divide the data into two groups, "transportation" and "non-transportation"
+
+transportation <- airPollution[, c("Industry", "PM10","PM2.5" )]
+
+```
+However, the data contained 3238 missing values. Rows containing them were removed, leaving 1900 rows. 
+```{r}
+transportation %>% is.na %>% sum
+```
+
+According to the table, 34.7% of the industries in Seoul were categorized as "transportation". Note that this is after removing rows with missing values; the "other" category was removed. 
+```{r transCont}
+transportation <- transportation %>% na.omit()
+
+
+transportation$type  <- NA
+for(i in 1:nrow(transportation)){
+  if(transportation$Industry[i] %in% c("bus", "road", 
+                                  "offroad", "sedan", "van",
+                                  "bike", "taxi", "special", "truck")){
+    transportation$type[i] = "transportation"
+  }
+  else{
+    transportation$type[i] = "nontransportation"
+  }
+}
+transportation$type <- transportation$type %>% as.factor
+ 
+transPercent <-  transportation %>% 
+  dplyr::group_by(type) %>% 
+  dplyr::summarise(n = n()) %>% 
+  plotly::plot_ly(labels = ~type, values = ~n, type = "pie") %>% 
+  plotly::layout(title="% of Transportation")
+transPercent
+```
+
+30% of PM2.5 and 27% of PM10 were emitted from transportation.
+<br>
+Though the emission by transportation is not as high as 50% as indicated by WHO, transportation still remains a heavy culprit. Thus, if the Particulate Matter Mitigation Act is successful, it may yield significant results. 
+```{r transpoGraph}
+ft1 <- transportation %>% 
+  dplyr::group_by(type) %>% 
+  dplyr::summarise(PM2.5 = sum(PM2.5)) 
+ft1$PM2.5 <- (ft1$PM2.5 /(ft1$PM2.5 %>% sum)) %>% round(digits = 2)
+
+ft2 <- transportation %>% 
+  dplyr::group_by(type) %>% 
+  dplyr::summarise(PM10 = sum(PM10)) 
+ft2$PM10 <- (ft2$PM10 /(ft2$PM10 %>% sum) )%>% round(digits = 2)
+
+ft <- left_join(ft1, ft2)
+
+ftGraph1 <- ggplot(ft, aes(x = "", y = PM2.5, fill = type))+
+  geom_bar(width = 1, stat= "identity")+
+  coord_polar("y") + 
+ theme_minimal()+
+  theme(
+  axis.title.x = element_blank(),
+  axis.title.y = element_blank(),
+  panel.border = element_blank(),
+  panel.grid=element_blank(),
+  axis.ticks = element_blank(),
+  plot.title=element_text(size=14, face="bold")
+  ) +
+  theme(axis.text.x=element_blank()) +
+  geom_text(aes(y = PM2.5/2,
+            label = PM2.5
+            ), size=5
+  )+
+  ggtitle("PM2.5 Emission")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+ftGraph2 <- ggplot(ft, aes(x = "", y = PM10, fill = type))+
+  geom_bar(width = 1, stat= "identity")+
+  coord_polar("y") + 
+ theme_minimal()+
+  theme(
+  axis.title.x = element_blank(),
+  axis.title.y = element_blank(),
+  panel.border = element_blank(),
+  panel.grid=element_blank(),
+  axis.ticks = element_blank(),
+  plot.title=element_text(size=14, face="bold")
+  ) +
+  theme(axis.text.x=element_blank()) +
+  geom_text(aes(y = PM10/2,
+            label = PM10
+            ), size=5
+  )+
+  ggtitle("PM10 Emission")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+grid.arrange(ftGraph1, ftGraph2, nrow = 1)
+
+
+```
+
+## 2018 
+
+This dataset lists the pollution level for different sectors of Seoul everyday of 2018. This dataset will be used to compare PM emission before and after the act. 
+
+> Source: https://data.seoul.go.kr/dataList/datasetView.do?infId=OA-2218&srvType=S&serviceKind=1&currentPageNo=1&searchValue=&searchKey=null
+
+
+```{r 2018}
+air2018 <- readxl::read_xlsx(path = "ajswl2018.xlsx",
+                            col_names = TRUE
+                           )
+air2018 %>% head() %>% kable
+```
+
+Only the columns date, sector, PM10, and PM2.5 were kept. Since the 2019 dataset contains values only till July 1st, the 2018 dataset was parsed to match accordingly. Date was changed to date object. Sector was factorized. Rows with missing values were eliminated since air pollution can change drastically day to day. The pollution level of the 46 districts were averaged because this project aims to measure to overall PM level of Seoul as a whole.
+
+```{r 2018wrangle}
+
+air2018 <- air2018[c(1,2,7,8)]
+
+colnames(air2018) <- c("date","sector", "PM10", "PM2.5")
+
+
+
+air2018$sector <-air2018$sector %>%  as.factor
+
+air2018 <- air2018 %>% na.omit()
+
+air2018 <- air2018 %>% 
+  filter(date <= "20180701")
+air2018$date <- air2018$date %>%  as.character() %>% as.Date(format ="%Y%m%d", origin = "1970-01-01")
+
+```
+After eliminating the missing values, there were 128 rows left.
+```{r}
+air2018 %>% summary()
+```
+```{r}
+
+air2018PM10 <- air2018 %>% 
+  group_by(date) %>% 
+  summarise(DailyEmission = sum(PM10)) 
+air2018PM2.5 <- air2018 %>% 
+  group_by(date) %>% 
+  summarise(DailyEmission = sum(PM2.5)) 
+
+```
+
+
+The first graph describes the daily change of PM10 and PM2.5 level in Seoul in 2018. The graph is messy; furthermore, the lack of variance in .
+<br>
+The second graph describes the weekly average of PM emissions level in 2018. 
+
+
+```{r 2018graph}
+air2018PM10day <- air2018PM10 %>% 
+  ggplot(mapping = aes(x= date, y = DailyEmission))+
+  geom_line()+
+  ggtitle("Daily PM10 Level in Seoul in 2018")
+
+air2018PM2.5day <- air2018PM2.5 %>% 
+  ggplot(mapping = aes(x= date, y = DailyEmission))+
+  geom_line()+
+  ggtitle("Daily PM2.5 Level in Seoul in 2018")
+
+grid.arrange(air2018PM10day, air2018PM2.5day, nrow = 1)
+
+week <-  format(air2018PM10$date, format = "%W") 
+air2018PM10 <- cbind(air2018PM10, week)
+week <-  format(air2018PM2.5$date, format = "%W") 
+air2018PM2.5 <- cbind(air2018PM2.5, week)
+
+air2018PM10$week <- air2018PM10$week %>% as.numeric()
+air2018PM2.5$week <- air2018PM2.5$week %>% as.numeric()
+
+air2018PM10week <- air2018PM10 %>% 
+  group_by(week) %>% 
+  summarise(WeeklyEmission = (mean(DailyEmission))) %>% 
+  ggplot(mapping = aes(x= week, y = WeeklyEmission))+
+  geom_line()+
+  ggtitle("Weekly PM10 Level in Seoul in 2018")
+
+air2018PM2.5week <- air2018PM2.5 %>% 
+  group_by(week) %>% 
+  summarise(WeeklyEmission = (mean(DailyEmission))) %>% 
+  ggplot(mapping = aes(x= week, y = WeeklyEmission))+
+  geom_line()+
+  ggtitle("Weekly PM2.5 Level in Seoul in 2018")
+
+grid.arrange(air2018PM10week,air2018PM2.5week, nrow = 1 )
+```
+
+## 2019
+
+This dataset lists the pollution level for different sectors of Seoul from July 1st, 2018 to July 1st, 2019.
+
+> Source: https://data.seoul.go.kr/dataList/datasetView.do?infId=OA-2218&srvType=S&serviceKind=1&currentPageNo=1&searchValue=&searchKey=null
+
+
+
+```{r 2019}
+
+air2019 <- read_csv("ajswl2019.csv",
+                            col_names = TRUE
+                           )
+
+air2019 %>% glimpse()
+
+```
+ 
+Dataset was parsed so that the first date is January 1st, 2019. This dataset has the same structure as that of 2018; the same operations were performed. There were more unavailable data (839) in the 2019 data than 2018 data.
+
+```{r 2019wrangling}
+air2019 <- air2019[c(1,2,7,8)]
+
+colnames(air2019) <- c("date","sector", "PM10", "PM2.5")
+
+air2019 <- air2019 %>% 
+  filter(date >= "20190101")
+
+air2019$sector <-air2019$sector %>%  as.factor
+
+air2019 <- air2019 %>% na.omit()
+
+air2019$date <- air2019$date %>%  as.character() %>% as.Date(format ="%Y%m%d", origin = "1970-01-01")
+
+```
+There were 175 rows left after eliminating rows with missing values.
+```{r}
+air2019 %>% summary()
+
+air2019PM10 <- air2019 %>% 
+  group_by(date) %>% 
+  summarise(DailyEmission = sum(PM10)) 
+air2019PM2.5 <- air2019 %>% 
+  group_by(date) %>% 
+  summarise(DailyEmission = sum(PM2.5)) 
+
+```
+
+
+```{r 2019graph}
+air2019PM10day <- air2019PM10 %>% 
+  ggplot(mapping = aes(x= date, y = DailyEmission))+
+  geom_line()+
+  ggtitle("Daily PM10 Level in Seoul in 2018")
+
+air2019PM2.5day <- air2019PM2.5 %>% 
+  ggplot(mapping = aes(x= date, y = DailyEmission))+
+  geom_line()+
+  ggtitle("Daily PM2.5 Level in Seoul in 2018")
+
+grid.arrange(air2019PM10day, air2019PM2.5day, nrow = 1)
+
+week <-  format(air2019PM10$date, format = "%W") 
+air2019PM10 <- cbind(air2019PM10, week)
+week <-  format(air2019PM2.5$date, format = "%W") 
+air2019PM2.5 <- cbind(air2019PM2.5, week)
+
+air2019PM10$week <- air2019PM10$week %>% as.numeric()
+air2019PM2.5$week <- air2019PM2.5$week %>% as.numeric()
+
+air2019PM10week <- air2019PM10 %>% 
+  group_by(week) %>% 
+  summarise(WeeklyEmission = (mean(DailyEmission))) %>% 
+  ggplot(mapping = aes(x= week, y = WeeklyEmission))+
+  geom_line()+
+  ggtitle("Weekly PM10 Level in Seoul in 2019")
+
+air2019PM2.5week <- air2019PM2.5 %>% 
+  group_by(week) %>% 
+  summarise(WeeklyEmission = (mean(DailyEmission))) %>% 
+  ggplot(mapping = aes(x= week, y = WeeklyEmission))+
+  geom_line()+
+  ggtitle("Weekly PM2.5 Level in Seoul in 2019")
+
+grid.arrange(air2019PM10week,air2019PM2.5week, nrow = 1 )
+```
+Likewise, The first graph describes the daily change of PM10 and PM2.5 level in Seoul in 2019.
+<br>
+The second graph describes the weekly average of PM emissions level in 2019. 
+
+```{r compare}
+
+colnames(air2018)[3:4] <- c("PM10_2018", "PM2.5_2018")
+colnames(air2019)[3:4] <- c("PM10_2019", "PM2.5_2019")
+
+total <- left_join(air2018,air2019)
+
+
+```
+There are many factors that effect the magnitude air pollution; season is one. This project fails to capture the different variables. 
+<br>
+It would be ideal to compare the air pollution level before and after the act. However, such would result in inaccuracy due to the inevitable variance due to season. 
+
