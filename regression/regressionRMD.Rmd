@@ -1,0 +1,387 @@
+---
+title: 실제 주식투자 시 고려할 변수들간 상관관계 분석
+author: "2조: 장윤예, 노민관, 이민규, 이경복, 한동훈"
+date: "7/21/2019"
+output: 
+  html_document:
+    code_folding: hide
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+setwd("C:/FastCampus/Regression/data")
+stockNfirm <- readRDS("stockAndFirms.rds")
+
+```
+
+![Courtesy of Google Image](data/marketvolatility2.jpg)
+
+#### 주제 선정 이유
+<br/>
+실제 주식 투자 시, 신문, 방송, 애널리스트 보고서, HTS 등 참고할 자료들이 많다.
+<br/>
+매일 시시각각 변화해가는 시장을 따라 앞서가기 위해서는, 수많은 시장 변수들을 체크해야 하는데,
+<br/>
+그중 영향력이 있는 변수들을 주요 변수 라고 한다.
+<br/>
+학계에서는 시장에 영향력 있는 변수들을 이론으로 정립하고, 논문들을 내지만, 아쉽게도 각 종목간
+<br/>
+상관관계가 아닌, 시장 전체에 대한 논문이 다수를 이루고 있다. 이에 전체 시장을 보는 학계와 달리,
+<br/>
+100인 100색 시대에, 각 종목 당 유의한 변수들을 찾는 방식으로 접근할 필요가 있다.
+<br/>
+<br/>
+
+#### 목표
+각 종목 당 유의한 변수들간 통계적 유의관계를 밝힌다
+<br/>
+<br/>
+
+#### 데이터 수집 방법 및 출처
+```{r, install = FALSE, message = FALSE, warning = FALSE}
+library(reshape2)
+library(stargazer)
+library(tidyverse)
+library(zoo)
+library(RcppEigen)
+library(jtools)
+library(naniar)
+library(data.table)
+
+```
+
+
+### 주가 (종속변수)
+
+<br/>
+
+https://finance.naver.com/item/sise.nhn?code=093370  하단> 날짜, 종가, 거래량 수치 (2010-09-16 부터 현재까지)
+
+<br/>
+```{r}
+stockNfirm %>% 
+  dplyr::select(c(1, 7:11)) %>% 
+  head()
+stockNfirm %>% 
+  dplyr::select(c(1, 7:11)) %>% 
+  tail()
+
+naniar::vis_miss(stockNfirm[c(1,7,8)])
+naniar::gg_miss_upset(stockNfirm[c(1,7,8)])
+
+```
+
+<br/>
+다 같이 없는 종가들을 삭제 (공휴일 및 주말에 주식시장이 문을 닫으므로)
+```{r}
+stockNfirm <- stockNfirm[rowSums(is.na(stockNfirm)) != ncol(stockNfirm) - 1 , ]
+# is.na() converts the dataframe into dataframe of T & F based on val is.na or not
+# rowsums sums the numeric vals in the row and returns a numeric vector of sums of all rows
+```
+##### 다시 시각화
+```{r}
+naniar::vis_miss(stockNfirm[c(1,7,8)])
+naniar::gg_miss_upset(stockNfirm[c(1,7,8)])
+```
+<br/>
+여기서 비록 123개의 중복되는 NA 값을 안 지운 이유:
+<br/>
+해외 지수하고 회귀분석 할거 이기 때문에 해외 주식 시장이 열린 날짜는 제외를 안함. 값을 채워 넣는데
+<br/>
+우리는 Last Value Carry Forward (NA 값을 전값으로 채우기) 전략을 선택함.
+<br/>
+
+##### 다시 시각화
+```{r}
+# Converting all NaNs to NA ----
+stockNfirm[,-1] <- sapply(stockNfirm[,-1], function(x) ifelse(is.nan(x), NA, x))
+
+# Last Value Carry Forward ----
+stockNfirm <- na.locf(stockNfirm)
+
+stockNfirm %>% 
+  dplyr::select(c(1, 7:11)) %>% 
+  head()
+stockNfirm %>% 
+  dplyr::select(c(1, 7:11)) %>% 
+  tail()
+```
+##### 깔끔
+```{r}
+sum(is.na(stockNfirm$samsung))
+```
+
+##### 삼성전자 액면 분활 조정하기
+```{r}
+# Deleting commas in numbers and converting char vectors to numeric vectors ----
+for(i in 2:ncol(stockNfirm)){
+  stockNfirm[ ,i] <- as.character(stockNfirm[ ,i])
+  stockNfirm[ ,i] <- stockNfirm[ ,i] %>% stringr :: str_remove_all(pattern = ',')
+  stockNfirm[ ,i] <- as.numeric(stockNfirm[ ,i])
+}
+```
+
+```{r}
+par(mfrow = c(2,1))
+plot(stockNfirm$samsung)
+stockNfirm <- dplyr::mutate(stockNfirm, 
+                            samsung = ifelse(samsung > 500000,
+                            samsung/50,
+                            samsung))
+plot(stockNfirm$samsung)
+```
+<br/>
+우리는 투자자로써 우선 투자 시점 대비 주식의 백분률 변화율에 관심이 있으므로 우선 현재 종가 데이터를 첫번째 날짜를 기준으로 하여 다 나눠서 백분율 데이터로
+<br/>
+바꾸고 그 백분율화된 종가의 데이터를 전날 종가로 빼서 1일 주가 변동폭 이라는 데이터셋을 만듭니다.
+<br/>
+<br/>
+
+#### 1일 주가 변동폭
+
+<br/>
+* 백분율의 기준가 : 2010-09-16
+<br/>
+```{r}
+stockNfirm[1,c(1, 7:ncol(stockNfirm))]
+```
+
+```{r}
+# Percentage Adjustion ----
+
+adj_stockNfirm <- stockNfirm[,-1]
+adj_stockNfirm <- adj_stockNfirm / adj_stockNfirm[1, ,drop = TRUE]
+date <- stockNfirm[,1]
+adj_stockNfirm <- cbind(date, adj_stockNfirm)
+```
+
+<br/>
+* 모든 종가를 기준가로 나눈후
+<br/>
+```{r}
+adj_stockNfirm %>% 
+  dplyr::select(c(1, 7:11)) %>% 
+  head()
+adj_stockNfirm %>% 
+  dplyr::select(c(1, 7:11)) %>% 
+  tail()
+
+```
+
+<br/>
+* 모든 백분율 종가를 전날 백분율 종가로 뺀후
+<br/>
+```{r}
+# Difference ----
+
+diff_stockNfirm <- adj_stockNfirm[,-1]
+diff_stockNfirm <-  data.frame(diff(as.matrix(diff_stockNfirm), lag = 1))
+date_diff <- stockNfirm[-1,1]
+diff_stockNfirm <- cbind(date_diff, diff_stockNfirm)
+
+ggpplot_diff_stockNfirm <-melt(diff_stockNfirm[c(1, 7:ncol(diff_stockNfirm))],id.vars="date_diff")
+ggpplot_diff_stockNfirm <- ggpplot_diff_stockNfirm %>% 
+  dplyr::filter(variable != "samsungWu")
+```
+
+```{r}
+adj_stockNfirm %>% 
+  dplyr::select(c(1, 7:11)) %>% 
+  head()
+diff_stockNfirm %>% 
+  dplyr::select(c(1, 7:11)) %>% 
+  head()
+```
+
+<br/>
+
+##### 시각화
+
+<br/>
+
+```{r}
+summary(diff_stockNfirm$samsung, digits = 20)
+
+diff_stockNfirm %>% 
+  ggplot(mapping = aes(x = samsung))+
+  geom_histogram(bins = 50, col = "darkgreen")+
+  xlab("삼성주가 변화") +
+  labs(title = "약 10년간 삼성전자 1일 주가 변화 히스토그램") +
+  theme(title = element_text(hjust = 0.5))
+
+without_celltrion <- ggpplot_diff_stockNfirm %>% 
+  dplyr::filter(variable != "celltrion")
+
+without_celltrion %>% 
+  ggplot2::ggplot(mapping = aes(x = date_diff, y = value, fill = variable)) +
+  ggplot2::geom_boxplot(alpha = 0.75) + 
+  ggplot2::theme_classic() +
+  ggplot2::labs(x = "2010-09-16 ~ 2019-07-12",
+                y = "주가의 변화") +
+  ggplot2::theme(axis.title.y = element_text(angle = 0,
+                                             vjust = 0.5))
+
+
+summary(diff_stockNfirm$celltrion, digits = 20)
+
+celltrion_only <- ggpplot_diff_stockNfirm %>% 
+  dplyr::filter(variable == "celltrion")
+
+celltrion_only %>% 
+  ggplot2::ggplot(mapping = aes(x = date_diff, y = value, fill = variable)) +
+  ggplot2::geom_boxplot(alpha = 0.75) + 
+  ggplot2::theme_classic() +
+  ggplot2::labs(x = "2010-09-16 ~ 2019-07-12",
+                y = "주가의 변화") +
+  ggplot2::theme(axis.title.y = element_text(angle = 0,
+                                             vjust = 0.5))
+
+rm(list = c("celltrion_only", "without_celltrion"))
+
+```
+<br/>
+```{r}
+aaa <-melt(adj_stockNfirm[c(1, 7:ncol(adj_stockNfirm))],id.vars="date")
+aaa <- aaa %>% 
+  dplyr::filter(variable != "samsungWu")
+ggplot( aaa ,aes(date,value,color=variable))+geom_line()
+rm(list = "aaa")
+```
+
+<br/>
+
+### 독립변수
+<br/>
+1. 세계 주요시장 지수(코스피, 코스닥, 닛케이, 상해, 다우지수)
+
+```{r}
+
+
+
+```
+
+2.외국인 거래량
+
+<br/>
+
+https://finance.naver.com/item/frgn.nhn?code=093370 하단> 날짜, 순매매량, 보유율
+  
+<br/>
+<br/>
+
+3.기관 거래량 
+
+<br/>
+
+https://finance.naver.com/item/frgn.nhn?code=093370 하단> 날짜, 순매매량
+ 
+<br/>
+<br/>
+
+4. 거래대금
+
+<br/>
+
+거래대금 은 실제 hts상 파악이 가능하나, api로 R간 연계가 안됬다.
+
+<br/>
+
+네이버,다음은 거래량 만 나와있고, 거래대금은 당일 만 나와있어, 임의로 종가 * 거래량으로 산정했다. 
+
+<br/>
+
+다른방식으로는 (시가+종가+,,,)/n개 같은 산식을 적용하지만, 크롤링 시간이 걸려 단순하게 종가*거래량으로
+
+<br/>
+
+산정한다. 
+
+<br/>
+<br/>
+
+5. 종목토론실 (네이버)
+
+<br/>
+
+직접적인 영향은 없으나, 시장 관심 측정 수단은 가능. 관심이 없는 종목은 1년내내 게시판 글이 5개 미만인 곳도 있음.
+
+<br/>
+<br/>
+
+6. 증권사 보고서 (팍스넷, 한경컨센서스)
+
+<br/>
+
+애널리스트 보고서로, 시장의 관심을 불러일으킴.
+
+<br/>
+<!-- 2.시가총액 -->
+
+<!-- <br/> -->
+
+<!-- 시세(당일 종가) * 상장주식수 (https://finance.naver.com/item/main.nhn?code=093370 (우측상단) -->
+
+<!-- <br/> -->
+<!-- <br/> -->
+
+
+```{r}
+# index
+index.long<-melt(stockNfirm[1:6],id.vars="date")
+ggplot(index.long,aes(date,value,color=variable))+geom_line()
+
+
+```
+
+```{r}
+stockNfirm[["samsungWu"]] <- NULL
+stockPercent <- stockNfirm
+for(i in 2: ncol(stockPercent)){
+  initial = stockPercent[ 1 , i]
+  for(j in 1: nrow(stockPercent )){
+    stockPercent[ j , i] <- stockPercent[ j , i] / initial %>% 
+      round(digits = 3)
+    
+  }
+}
+
+stockPercent<- stockNfirm %>%
+  mutate(samsung = ifelse(samsung > 500000,
+                                   samsung/50,
+                                   samsung))
+```
+
+```{r}
+plot(stockPercent$samsung)
+
+multifit <- lm(samsung ~ sse + nikkei + kosdaq + kospi + dji, data = stockPercent)
+multifit
+summ(multifit)
+summary(multifit)
+# graph of error
+plot(multifit)
+
+```
+
+
+```{r}
+# singlefit <- lm(samsung ~ kospi, data = stockPercent)
+# summ(singlefit)
+
+effect_plot(multifit, pred = kospi, interval = TRUE, plot.points = TRUE)
+effect_plot(multifit, pred = sse, interval = TRUE, plot.points = TRUE)
+
+# effect_plot(singlefit, pred = kospi, interval = TRUE, plot.points = TRUE)
+```
+
+```{r}
+
+
+
+```
+
+
+
+
